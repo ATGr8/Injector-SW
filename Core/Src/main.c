@@ -43,27 +43,7 @@
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
 
-/* Definitions for blink01 */
-osThreadId_t blink01Handle;
-const osThreadAttr_t blink01_attributes = {
-  .name = "blink01",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* Definitions for blink02 */
-osThreadId_t blink02Handle;
-const osThreadAttr_t blink02_attributes = {
-  .name = "blink02",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityBelowNormal,
-};
-/* Definitions for blink03 */
-osThreadId_t blink03Handle;
-const osThreadAttr_t blink03_attributes = {
-  .name = "blink03",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
+osThreadId defaultTaskHandle;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -72,9 +52,9 @@ const osThreadAttr_t blink03_attributes = {
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
-void StartBlink01(void *argument);
-void StartBlink02(void *argument);
-void StartBlink03(void *argument);
+void StartDefaultTask(void const * argument);
+
+void StartDefaultTask1(void const * argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -119,9 +99,6 @@ int main(void)
 
   /* USER CODE END 2 */
 
-  /* Init scheduler */
-  osKernelInitialize();
-
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
@@ -139,22 +116,15 @@ int main(void)
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of blink01 */
-  blink01Handle = osThreadNew(StartBlink01, NULL, &blink01_attributes);
+  /* definition and creation of defaultTask */
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
-  /* creation of blink02 */
-  blink02Handle = osThreadNew(StartBlink02, NULL, &blink02_attributes);
-
-  /* creation of blink03 */
-  blink03Handle = osThreadNew(StartBlink03, NULL, &blink03_attributes);
-
+  osThreadDef(defaultTask1, StartDefaultTask1, osPriorityBelowNormal, 0, 128);
+  defaultTaskHandle = osThreadCreate(osThread(defaultTask1), NULL);
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
-
-  /* USER CODE BEGIN RTOS_EVENTS */
-  /* add events, ... */
-  /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
   osKernelStart();
@@ -280,67 +250,39 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE END 4 */
 
-/* USER CODE BEGIN Header_StartBlink01 */
+/* USER CODE BEGIN Header_StartDefaultTask */
 /**
-  * @brief  Function implementing the blink01 thread.
+  * @brief  Function implementing the defaultTask thread.
   * @param  argument: Not used
   * @retval None
   */
-/* USER CODE END Header_StartBlink01 */
-void StartBlink01(void *argument)
+/* USER CODE END Header_StartDefaultTask */
+void StartDefaultTask(void const * argument)
 {
   /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
   {
 	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
-	osDelay(50);
+	osDelay(500);
   }
 
   osThreadTerminate(NULL);
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_StartBlink02 */
-/**
-* @brief Function implementing the blink02 thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartBlink02 */
-void StartBlink02(void *argument)
+void StartDefaultTask1(void const * argument)
 {
-  /* USER CODE BEGIN StartBlink02 */
+  /* USER CODE BEGIN 5 */
   /* Infinite loop */
   for(;;)
   {
 	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
- 	osDelay(600);
+	osDelay(300);
   }
 
   osThreadTerminate(NULL);
-  /* USER CODE END StartBlink02 */
-}
-
-/* USER CODE BEGIN Header_StartBlink03 */
-/**
-* @brief Function implementing the blink03 thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartBlink03 */
-void StartBlink03(void *argument)
-{
-  /* USER CODE BEGIN StartBlink03 */
-  /* Infinite loop */
-  for(;;)
-  {
-	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
- 	osDelay(700);
-  }
-
-  osThreadTerminate(NULL);
-  /* USER CODE END StartBlink03 */
+  /* USER CODE END 5 */
 }
 
 /**
