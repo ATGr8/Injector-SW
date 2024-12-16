@@ -51,7 +51,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
-  osThreadDef(defaultTask, StartDefaultTask, osPriorityLow, 0, 128);
+  osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   osThreadDef(sensor_read, start_sensor_read, osPriorityNormal, 0, 128);
@@ -237,27 +237,43 @@ void start_sensor_read(void const * argument)
 {
   uint8_t spi_data;
   const uint8_t threshold = 128; // Example threshold value
-  const uint16_t servo_pin = GPIO_PIN_3; // Example servo pin
+  //const uint16_t servo_pin = GPIO_PIN_3; // Example servo pin
 
   for(;;)
   {
     // Read data from SPI device
-    if (HAL_SPI_Receive(&hspi1, &spi_data, 1, HAL_MAX_DELAY) == HAL_OK)
-    {
+    if (HAL_SPI_Receive(&hspi1, &spi_data, 1, HAL_MAX_DELAY) == HAL_OK) {
+	
+    	//HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
+	
+       
       // Check if the SPI data exceeds the threshold
-      if (spi_data > threshold)
+      if (spi_data < threshold)
       {
         // Drive the servo if the condition is met
-        HAL_GPIO_WritePin(GPIOB, servo_pin, GPIO_PIN_SET);
+       	//HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
+    	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
+    	osDelay(500);
       }
+
+      /*
       else
       {
         // Otherwise, reset the servo pin
-        HAL_GPIO_WritePin(GPIOB, servo_pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
       }
+     
+      */
     }
+   	
+    else { 
     
-    osDelay(600);
+    	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
+   	osDelay(100);
+	
+    
+    }
+	    
   }
 
   osThreadTerminate(NULL);
