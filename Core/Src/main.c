@@ -1,32 +1,24 @@
-/* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
+  *****************************************************************************************
   * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2024 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
-/* USER CODE END Header */
-/* Includes ------------------------------------------------------------------*/
+  * @brief          : Logic for oxidiser flow through injector for hybrid rocket motor
+  * @author         : Atharva Kulkarni 
+  *****************************************************************************************
+**/  
+ 
+/***** Includes *****************/
 #include "main.h"
 #include "cmsis_os.h"
+#include <stdio.h>
 
+/******* Initialize Handles *******/
 I2C_HandleTypeDef hi2c1;
-
 SPI_HandleTypeDef hspi1;
-
 UART_HandleTypeDef huart2;
-
 osThreadId defaultTaskHandle;
+osThreadId defaultTaskHandle2;
+
+/******* Function Definitions *****/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
@@ -34,7 +26,44 @@ static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
 void StartDefaultTask(void const * argument);
 void start_sensor_read(void const * argument);
+int ReadPressureSensor(int sensorIndex);
+int ReadTemperatureSensor(int sensorIndex);
 
+/************ Definitions **********/
+#define PRESSURE_SENSOR_COUNT 6
+#define TEMPERATURE_SENSOR_COUNT 12
+#define FUSION_THRESHOLD 1000   
+volatile uint8_t fused_value_flag = 0;
+
+/* Pressure Sensors I2C Addresses */
+const uint16_t pressureSensorI2CAddresses[PRESSURE_SENSOR_COUNT] = {
+    0x40, 
+    0x41, 
+    0x42, 
+    0x43, 
+    0x44, 
+    0x45  
+};
+
+/* Temperature Sensors I2C Addresses */
+const uint16_t temperatureSensorI2CAddresses[TEMPERATURE_SENSOR_COUNT] = {
+    0x46,  
+    0x47,  
+    0x48,  
+    0x49,  
+    0x4A,  
+    0x4B,  
+    0x4C,  
+    0x4D,  
+    0x4E,  
+    0x4F,  
+    0x50,  
+    0x51   
+};
+
+/* Mutex for thread-safe flag access */
+osMutexId flagMutexHandle;
+osMutexDef(flagMutex);
 
 /**
   * @brief  The application entry point.
@@ -44,26 +73,177 @@ int main(void)
 {
 
   HAL_Init();
-
   SystemClock_Config();
-
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
+  
   osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
   osThreadDef(sensor_read, start_sensor_read, osPriorityNormal, 0, 128);
-  defaultTaskHandle = osThreadCreate(osThread(sensor_read), NULL);
-
+  defaultTaskHandle2 = osThreadCreate(osThread(sensor_read), NULL);
 
   osKernelStart();
 
+  /* Should never go into forever while */
   while (1)
   {
+    Error_Handler();
   }
 }
+
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+void StartDefaultTask(void const * argument)
+{
+    // Initialize the valve state
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
+
+    for(;;)
+    {
+        uint8_t flag_status = 0;
+
+        // **Check the Flag Safely**
+        osMutexWait(flagMutexHandle, osWaitForever);
+        flag_status = fused_value_flag;
+        osMutexRelease(flagMutexHandle);
+
+        // **Control the Valve Based on the Flag**
+        if (flag_status)
+        {
+            // Turn the valve on
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);
+        }
+        else
+        {
+            // Turn the valve off
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
+        }
+
+        osDelay(50);
+    }
+}
+
+/**
+  * @brief  Function implementing reading from sensors.
+  * @param  argument: Not used
+  * @retval None
+  */
+void start_sensor_read(void const * argument)
+{
+    uint16_t pressure_values[PRESSURE_SENSOR_COUNT] = {0};
+    uint16_t temperature_values[TEMPERATURE_SENSOR_COUNT] = {0};
+    uint32_t fused_value = 0;
+
+    // Initialize the mutex
+    flagMutexHandle = osMutexCreate(osMutex(flagMutex));
+
+    for(;;)
+    {
+        fused_value = 0;
+
+        // **Read Pressure Sensors**
+        for (int i = 0; i < PRESSURE_SENSOR_COUNT; i++)
+        {
+            // Replace with actual sensor reading
+            pressure_values[i] = ReadPressureSensor(i);
+            fused_value += pressure_values[i];
+        }
+
+        // **Read Temperature Sensors**
+        for (int i = 0; i < TEMPERATURE_SENSOR_COUNT; i++)
+        {
+            // Replace with actual sensor reading
+            temperature_values[i] = ReadTemperatureSensor(i);
+            fused_value += temperature_values[i];
+        }
+
+        // **Data Fusion and Flag Setting**
+        if (fused_value > FUSION_THRESHOLD)
+        {
+            // Lock mutex before modifying the flag
+            osMutexWait(flagMutexHandle, osWaitForever);
+            fused_value_flag = 1;
+            osMutexRelease(flagMutexHandle);
+
+            // If using semaphore
+            // osSemaphoreRelease(flagSemHandle);
+        }
+        else
+        {
+            osMutexWait(flagMutexHandle, osWaitForever);
+            fused_value_flag = 0;
+            osMutexRelease(flagMutexHandle);
+
+            // If using semaphore
+            // osSemaphoreWait(flagSemHandle, 0);
+        }
+
+        // **Optional Debugging Indicator**
+        HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
+        osDelay(100);
+    }
+
+    // Not necessary to terminate the thread in an infinite loop
+    // osThreadTerminate(NULL);
+}
+
+
+
+
+
+
+int ReadPressureSensor(int sensorIndex)
+{
+    if (sensorIndex < 0 || sensorIndex >= PRESSURE_SENSOR_COUNT)
+        return 0;
+
+    uint16_t sensorValue = 0;
+    uint8_t i2cBuffer[2] = {0};
+
+    // **Read 2 bytes from the I2C device**
+    if (HAL_I2C_Master_Receive(&hi2c1, pressureSensorI2CAddresses[sensorIndex] << 1, i2cBuffer, 2, HAL_MAX_DELAY) == HAL_OK)
+    {
+        // Combine the two bytes into a 16-bit value
+        sensorValue = (i2cBuffer[0] << 8) | i2cBuffer[1];
+    }
+    else
+    {
+        // Handle I2C communication error
+        Error_Handler();
+    }
+
+    return sensorValue;
+}
+
+int ReadTemperatureSensor(int sensorIndex)
+{
+    if (sensorIndex < 0 || sensorIndex >= PRESSURE_SENSOR_COUNT)
+        return 0;
+
+    uint16_t sensorValue = 0;
+    uint8_t i2cBuffer[2] = {0};
+
+    // **Read 2 bytes from the I2C device**
+    if (HAL_I2C_Master_Receive(&hi2c1, pressureSensorI2CAddresses[sensorIndex] << 1, i2cBuffer, 2, HAL_MAX_DELAY) == HAL_OK)
+    {
+        // Combine the two bytes into a 16-bit value
+        sensorValue = (i2cBuffer[0] << 8) | i2cBuffer[1];
+    }
+    else
+    {
+        // Handle I2C communication error
+        Error_Handler();
+    }
+
+    return sensorValue;
+}
+/***** Initialize Communication Lines **************/
 
 /**
   * @brief System Clock Configuration
@@ -97,15 +277,11 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
-  {
     Error_Handler();
-  }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_I2C1;
   PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
-  {
     Error_Handler();
-  }
 }
 
 /**
@@ -126,20 +302,13 @@ static void MX_I2C1_Init(void)
   hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
   hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
   if (HAL_I2C_Init(&hi2c1) != HAL_OK)
-  {
     Error_Handler();
-  }
 
   if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
-  {
     Error_Handler();
-  }
 
   if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
-  {
     Error_Handler();
-  }
-
 }
 
 /**
@@ -166,9 +335,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CRCLength = SPI_CRC_LENGTH_DATASIZE;
   hspi1.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
   if (HAL_SPI_Init(&hspi1) != HAL_OK)
-  {
     Error_Handler();
-  }
 
 }
 
@@ -190,9 +357,7 @@ static void MX_USART2_UART_Init(void)
   huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
   if (HAL_UART_Init(&huart2) != HAL_OK)
-  {
     Error_Handler();
-  }
 }
 
 /**
@@ -218,66 +383,6 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
-/**
-  * @brief  Function implementing the defaultTask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void const * argument)
-{
-  for(;;)
-  {
-    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
-    osDelay(500);
-  }
-}
-
-void start_sensor_read(void const * argument)
-{
-  uint8_t spi_data;
-  const uint8_t threshold = 128; // Example threshold value
-  //const uint16_t servo_pin = GPIO_PIN_3; // Example servo pin
-
-  for(;;)
-  {
-    // Read data from SPI device
-    if (HAL_SPI_Receive(&hspi1, &spi_data, 1, HAL_MAX_DELAY) == HAL_OK) {
-	
-    	//HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
-	
-       
-      // Check if the SPI data exceeds the threshold
-      if (spi_data < threshold)
-      {
-        // Drive the servo if the condition is met
-       	//HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_SET);
-    	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_4);
-    	osDelay(500);
-      }
-
-      /*
-      else
-      {
-        // Otherwise, reset the servo pin
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, GPIO_PIN_RESET);
-      }
-     
-      */
-    }
-   	
-    else { 
-    
-    	HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3);
-   	osDelay(100);
-	
-    
-    }
-	    
-  }
-
-  osThreadTerminate(NULL);
-}
 
 
 /**
@@ -290,15 +395,10 @@ void start_sensor_read(void const * argument)
   */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  /* USER CODE BEGIN Callback 0 */
 
-  /* USER CODE END Callback 0 */
-  if (htim->Instance == TIM6) {
+  if (htim->Instance == TIM6) 
     HAL_IncTick();
-  }
-  /* USER CODE BEGIN Callback 1 */
 
-  /* USER CODE END Callback 1 */
 }
 
 /**
@@ -307,28 +407,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
   while (1)
   {
+    printf("Error, in Error Handler");
   }
-  /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
-void assert_failed(uint8_t *file, uint32_t line)
-{
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
-}
-#endif /* USE_FULL_ASSERT */
